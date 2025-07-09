@@ -1,136 +1,257 @@
-# Arduino IAC Controller for Bosch Motronic with Speeduino
+# IAC Servo Controller for Bosch Monopoint System
 
-This project uses an Arduino to control the Idle Air Control (IAC) valve for the Bosch Motronic injection system. The Speeduino ECU sends signals to the Arduino, which acts as the controller for the IAC valve.
+This Arduino project implements a servo controller for the Bosch 0132008600 throttle actuator, using Speeduino's PWM idle output as input and Track 1 of the Bosch 3437022 TPS for position feedback.
 
-![Bosch Motronic](https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Bosch_monopoint.jpg/2560px-Bosch_monopoint.jpg)
+## System Overview
 
-## Why This Project?
-The Speeduino ECU supports three types of idle control:
-1. On/Off
-2. PWM/Duty Cycle for normal IAC valves
-3. Stepper Motor
+The Arduino acts as a dedicated servo driver, translating PWM duty cycle commands from Speeduino into precise throttle position control for idle air control. All idle control logic (open loop, closed loop, target calculations) remains in Speeduino/TunerStudio - this controller only provides the servo functionality.
 
-However, the Bosch Motronic system from the 80s and 90s uses a unique setup with part numbers 0132008600 (DC motor) and 3437022 (throttle position sensor). This system works like a throttle actuator, opening the butterfly valve enough for idle, similar to a carburetor choke. The injector is positioned before the butterfly valve, making it an electronic copy of a carburetor.
+## Hardware Requirements
 
-To control the Bosch Motronic system with Speeduino, we need to convert the PWM/Duty Cycle signals from Speeduino into control signals for the butterfly valve. The 0132008600 part contains a DC motor, and the 3437022 part contains two potentiometers to measure the travel of the DC motor/butterfly valve and the accelerator travel. By combining these parts with an Arduino and the Speeduino signal, we can control the car's idle.
+### Essential Components
+- **Arduino Uno/Nano** - Main controller
+- **Bosch 0132008600** - DC motor throttle actuator
+- **Bosch 3437022 TPS** - Dual-track throttle position sensor
+- **H-Bridge Motor Driver** - L298N or similar (5A+ capability)
+- **Power Supply** - 12V for motor, 5V for Arduino
 
-## Components
-- **Arduino**: Microcontroller used to control the IAC valve.
-- **Speeduino**: Engine Control Unit (ECU) that sends signals to the Arduino.
-- **Bosch Motronic Injection System**: Fuel injection system that includes the IAC valve.
-- **Idle Air Control (IAC) Valve**: Device that regulates the engine's idle speed by controlling the amount of air bypassing the throttle plate.
-- **DC Motor**: Bosch part number 0132008600.
-  ![Bosch 0132008600](https://www.autotav.com/bilder/produkte/gross/Leerlaufsteller-Bosch-0132008600-Drosselklappensteller.jpg)
-  - **Pin 1**: DC motor pin
-  - **Pin 2**: DC motor pin
-  - **Pin 3**: CTS idle button (used by some ECUs to detect when the accelerator is released and comes to resting place)
-  - **Pin 4**: CTS idle button (used by some ECUs to detect when the accelerator is released and comes to resting place)
-- **Throttle Position Sensor (TPS)**: Bosch part number 3437022, contains two potentiometers.
-  ![Bosch 3437022](https://2.bp.blogspot.com/-KULqzjvxB94/V3sY4aP58WI/AAAAAAAAAH0/Py8Fm3HYiD4Ffd6RAuULeemBGt2gdXdXwCLcB/s1600/THROTTLE-POSITION-SENSOR-FOR-VW-037907385A-3437022%2B%25284%2529.jpg)
-  - **Pin 1**: GND
-  - **Pin 2**: Signal for Arduino (IAC travel)
-  - **Pin 3**: (does not exist)
-  - **Pin 4**: Signal for TPS of Speeduino (accelerator pedal positions/travel)
-  - **Pin 5**: Power 5V
-- **L293D Motor Driver**: Motor driver IC used to control the direction and speed of the DC motor.
-  ![L293D Motor Driver](https://how2electronics.com/wp-content/uploads/2022/08/L293D-Motor-Driver-IC-Pin.jpg)
+### Wiring Diagram (1 PWM Mode)
 
-## Overview
-The Speeduino ECU sends PWM (Pulse Width Modulation) signals to the Arduino. The Arduino interprets these signals and adjusts the IAC valve accordingly to maintain the desired idle speed.
+```
+Speeduino PWM (Open Drain) -----> Pin 2 (Arduino with internal pull-up enabled)
 
-## Prerequisites
-- **Arduino IDE**: Ensure you have the Arduino IDE installed on your computer. You can download it from the [official website](https://www.arduino.cc/en/software).
-- **Basic Electronics Knowledge**: Familiarity with basic electronics and wiring.
-- **Components**: Ensure you have all the components listed in the "Components" section.
+Bosch 3437022 TPS (5-pin connector):
+Pin 5: +5V -----------> 5V Supply
+Pin 4: Track 2 -------> Speeduino TPS Input [Main TPS Signal]
+Pin 3: (Not used) ----> (Not connected)
+Pin 2: Track 1 -------> Pin A0 (Arduino) [Servo Feedback]
+Pin 1: Ground --------> Common Ground
 
-## Wiring Diagram
-<!-- Wiring diagram image reference removed -->
+Bosch 0132008600 Motor (4-pin connector):
+Pin 1: Motor + ----------> H-Bridge Output A
+Pin 2: Motor - ----------> H-Bridge Output B  
+Pin 3: CTS Idle Switch -> (Not used)
+Pin 4: CTS Idle Switch -> (Not used)
 
-- **Throttle Position Sensor (TPS)**:
-  - **Pin 1**: Connect to GND on the Arduino.
-  - **Pin 2**: Connect to A0 on the Arduino (IAC travel signal).
-  - **Pin 5**: Connect to 5V on the Arduino.
+Arduino Pin 5 --------> H-Bridge PWM Input
+Arduino Pin 6 --------> H-Bridge Direction Input
 
-- **L293D Motor Driver**:
-  - **Input Pin 1**: Connect to pin 8 on the Arduino.
-  - **Input Pin 2**: Connect to pin 7 on the Arduino.
-  - **Enable Pin**: Connect to pin 9 on the Arduino.
-  - **Vcc1**: Connect to 5V on the Arduino.
-  - **Vcc2**: Connect to an external power supply (e.g., 12V) for the motor.
-  - **GND**: Connect to GND on the Arduino and the external power supply.
-  - **Output Pin 1**: Connect to pin 1 on the DC motor.
-  - **Output Pin 2**: Connect to pin 2 on the DC motor.
-
-### Why Use the L293D Motor Driver?
-The L293D motor driver is used to control the direction and speed of the DC motor. Unlike simple positive and negative connections, the L293D allows for more precise control over the motor's operation. By using input pins to control the motor's direction, the L293D can reverse the motor's rotation, which is essential for adjusting the IAC valve position accurately.
-
-## Code
-The Arduino code for this project can be found in the `IAC_Controller.ino` file. This file contains the logic to read the potentiometer value and control the DC motor to adjust the IAC valve position. You can also set the target position percentage via the serial monitor.
-
-## Installation
-1. **Install the Arduino IDE**: Download and install the Arduino IDE from the [official website](https://www.arduino.cc/en/software).
-2. **Connect the Arduino**: Connect your Arduino board to your computer using a USB cable.
-3. **Open the Code**: Open the provided Arduino code in the Arduino IDE.
-4. **Select the Board and Port**: In the Arduino IDE, go to `Tools > Board` and select your Arduino board model. Then go to `Tools > Port` and select the port to which your Arduino is connected.
-5. **Upload the Code**: Click the upload button in the Arduino IDE to upload the code to your Arduino board.
-
-## Usage
-1. **Upload the Code**: Upload the provided Arduino code to your Arduino board using the Arduino IDE.
-2. **Connect the Components**: Follow the wiring diagram to connect the potentiometer, L293D motor driver, and IAC valve to the Arduino.
-3. **Power the System**: Connect the Arduino to a power source and ensure the external power supply for the motor driver is also connected.
-4. **Start the Engine**: Start your engine and let the Speeduino ECU send signals to the Arduino.
-5. **Set Target Position**: Open the serial monitor in the Arduino IDE and enter the target position percentage (0-100) to set the desired idle speed.
-6. **Monitor and Adjust**: The Arduino will automatically adjust the IAC valve based on the signals received from the Speeduino ECU to maintain the desired idle speed.
-
-## Next Phase: Reading Speeduino V4 Open-Drain Signal
-
-The next phase of this project is to understand how to read the Speeduino V4 idle PWM open-drain signal and use it with the Arduino. This signal will control the target position value for the IAC valve.
-
-### What is an Open-Drain Signal?
-An open-drain (or open-collector) signal is a type of output that can either be connected to ground (low) or left floating (high-impedance). It requires an external pull-up resistor to pull the signal to a high voltage level when the output is not actively pulling it low.
-
-### How to Connect an Open-Drain Signal to Arduino
-To connect an open-drain signal from the Speeduino V4 to the Arduino, follow these steps:
-1. **Pull-Up Resistor**: Connect a pull-up resistor (e.g., 10k ohms) between the open-drain signal line and the 5V supply on the Arduino.
-2. **Signal Line**: Connect the open-drain signal line to one of the digital input pins on the Arduino.
-
-### Reading an Open-Drain PWM Signal with Arduino
-To read the open-drain PWM signal from the Speeduino V4 with the Arduino:
-1. **Configure the Pin**: Set the digital input pin connected to the open-drain signal as an input in the Arduino code.
-2. **Read the Signal**: Use the `pulseIn()` function to measure the duration of the high and low pulses of the PWM signal.
-
-Example code snippet:
-```cpp
-const int pwmPin = 2; // Digital input pin connected to the open-drain signal
-unsigned long highDuration;
-unsigned long lowDuration;
-
-void setup() {
-  pinMode(pwmPin, INPUT);
-  Serial.begin(9600);
-}
-
-void loop() {
-  highDuration = pulseIn(pwmPin, HIGH);
-  lowDuration = pulseIn(pwmPin, LOW);
-  Serial.print("High Duration: ");
-  Serial.print(highDuration);
-  Serial.print(" Low Duration: ");
-  Serial.println(lowDuration);
-  delay(1000);
-}
+12V Supply -----------> H-Bridge VCC, Motor Supply
+5V Supply ------------> Arduino VCC, TPS Pin 5
+Ground ---------------> Common Ground (All components)
 ```
 
-This code will read the high and low durations of the PWM signal and print them to the serial monitor. The measured PWM signal will be used to control the target position value for the IAC valve.
+## Pin Configuration
 
-## Additional Resources
-- [Speeduino Official Website](https://speeduino.com/)
-- [Speeduino Wiki](https://wiki.speeduino.com/)
-- [Speeduino Idle Configuration (PWM Option)](https://wiki.speeduino.com/en/configuration/Idle)
-- [Bosch Motronic on Wikipedia](https://en.wikipedia.org/wiki/Motronic)
+| Arduino Pin | Function | Connection |
+|-------------|----------|------------|
+| Pin 2 | PWM Input | Speeduino Idle Output (Arduino internal pull-up enabled) |
+| Pin A0 | TPS Feedback | TPS Pin 2 (Track 1 - 0-5V) |
+| Pin 5 | Motor PWM | H-Bridge PWM Input |
+| Pin 6 | Motor Direction | H-Bridge Direction |
+| Pin 13 | Status LED | Built-in LED |
 
-## Contributing
-Contributions are welcome! If you have any suggestions or improvements, please create a pull request or open an issue on the project's GitHub repository.
+## Hardware Component Details
+
+### Bosch 3437022 TPS Pinout (5-pin connector)
+- **Pin 1**: Ground (GND)
+- **Pin 2**: Track 1 Output (0-5V servo feedback) - Connect to Arduino A0
+- **Pin 3**: (Not used)  
+- **Pin 4**: Track 2 Output (0-5V main TPS signal) - Connect to Speeduino TPS input
+- **Pin 5**: +5V Supply (Power)
+
+*Note: This is a 5-pin connector with dual potentiometers. Pin 3 is not used in this configuration.*
+
+### Bosch 0132008600 Motor Specifications - DETAILED PINOUT
+- **Type**: DC Motor Actuator with 4-pin connector
+- **Voltage**: 12V nominal (9-14V operating range)
+- **Current**: ~2-5A peak (varies with load)
+- **Connector**: 4-pin electrical connector
+- **Function**: Controls throttle butterfly resting position (idle air bypass)
+
+#### Bosch 0132008600 Pinout (4-pin connector):
+- **Pin 1**: DC Motor + (Positive terminal)
+- **Pin 2**: DC Motor - (Negative terminal)  
+- **Pin 3**: CTS Idle Switch (Closed Throttle Switch - idle position detection)
+- **Pin 4**: CTS Idle Switch (Closed Throttle Switch - idle position detection)
+
+*Note: Pins 1 & 2 are the actual DC motor connections. Pins 3 & 4 are closed throttle switch contacts used by some ECUs to detect when throttle is at idle position.*
+
+#### H-Bridge Connection:
+- **H-Bridge Output A** → Pin 1 (Motor positive)
+- **H-Bridge Output B** → Pin 2 (Motor negative)
+- **Arduino Pin 5** → H-Bridge PWM Input (speed control)
+- **Arduino Pin 6** → H-Bridge Direction Input (polarity control)
+- **Pins 3 & 4**: Not used in this application (CTS function handled by TPS Track 1)
+
+#### Alternative Part Numbers:
+- BMW: 13541464908
+- VW/Audi: 051133031 / 51133031  
+- Peugeot/Citroën: 1920F8, 95651031
+- Fiat: 7077494
+- Applications: 1988-1999 Audi, BMW, Citroën, Fiat, Lancia, Peugeot, Renault, Seat, Škoda, VW
+
+#### Technical Notes:
+- **Operating Mode**: Electric reversible actuator
+- **Control Method**: PWM speed control + direction switching via H-Bridge
+- **Mounting**: Integrated into throttle body assembly
+- **Thread/Shaft**: Mechanical connection to throttle butterfly valve
+- **Duty Cycle**: Typical 0-100% PWM for position control
+
+### Speeduino PWM Output - CRITICAL WIRING NOTE
+- **Type**: Open Drain Output (NOT push-pull)
+- **Arduino Solution**: Use **internal pull-up resistor** (enabled in software)
+- **No external resistor needed**: Arduino's internal ~20-50kΩ pull-up handles this
+- **Wiring**: Direct connection: Speeduino PWM → Arduino Pin 2
+- **Signal Level**: 0V (when Speeduino pulls low) to 5V (when pulled high by internal resistor)
+
+## Speeduino/TunerStudio Configuration
+
+### Required Settings in TunerStudio:
+
+1. **Enable Idle Control:**
+   - Go to Settings → Idle
+   - Enable "Use Idle Control"
+   - Set Algorithm to "PWM Open Loop" or "PWM Closed Loop"
+
+2. **Configure PWM Output:**
+   - **PWM Type**: Choose between "1 PWM" or "2 PWM" in TunerStudio Idle settings
+   - **Recommended**: Use "1 PWM" mode for this Arduino controller
+   - Set PWM Frequency: Use available Speeduino options (typically 15.6Hz, 31.25Hz, 62.5Hz, 125Hz, or 250Hz)
+   - **Note**: Arduino code automatically adapts to any frequency - no specific frequency required
+   - Set Duty Cycle range: 10-90% (maps to 1000-2000μs pulse width)
+   - Assign Idle PWM output to appropriate pin
+   - **Important**: Speeduino PWM is open drain - Arduino internal pull-up handles this automatically
+
+3. **TPS Configuration:**
+   - Wire TPS Pin 5 to +5V supply
+   - Wire TPS Pin 2 (Track 1) to Arduino A0 for servo feedback
+   - Wire TPS Pin 1 to ground  
+   - Wire TPS Pin 4 (Track 2) to Speeduino TPS input for engine management
+   - Calibrate TPS in TunerStudio (closed/open throttle positions)
+   - Track 1 and Track 2 provide independent position signals
+
+### PWM Signal Types Explained:
+
+**1 PWM Mode (Recommended for this project):**
+- Single PWM signal with variable duty cycle (10-90%)
+- Duty cycle represents desired position: 50% = center, 90% = full open, 10% = full closed
+- Arduino reads duty cycle and determines both direction and magnitude
+- **Connection**: Single wire from Speeduino PWM output → Arduino Pin 2
+
+**2 PWM Mode (Alternative - requires code modification):**
+- Two separate PWM signals: one for each direction (open/close)
+- Each signal can be 0-100% duty cycle
+- Typically used for dual-coil stepper motors or H-bridge direct control
+- **Connection**: Would require two Arduino input pins and modified code
+- **Note**: Current Arduino code is designed for 1 PWM mode only
+
+**Why 1 PWM is Recommended:**
+- Simpler wiring (single signal wire)
+- Current Arduino code is optimized for this mode
+- Compatible with most Speeduino idle control algorithms
+- Easier troubleshooting and setup
+
+## Software Features
+
+### Core Functionality
+- **PWM Input Reading**: Measures 1000-2000μs pulse width from Speeduino (1 PWM mode)
+- **Position Feedback**: Reads TPS Track 1 for current throttle position
+- **PID Control**: Smooth, accurate position control with tunable parameters
+- **Motor Drive**: Bidirectional PWM control via H-Bridge
+- **Direction Logic**: Automatically determines motor direction from duty cycle
+
+### Safety Features
+- Input validation and filtering
+- Motor enable/disable capability
+- Position limits and deadband
+- Integral windup protection
+
+### Diagnostic Features
+- Serial monitor output (115200 baud)
+- Real-time parameter tuning via serial commands
+- Status LED indication
+- Comprehensive error reporting
+
+## Serial Commands
+
+Connect to Arduino via Serial Monitor (115200 baud) for diagnostics and tuning:
+
+| Command | Description |
+|---------|-------------|
+| `STATUS` | Show detailed system status |
+| `KP=value` | Set proportional gain (e.g., KP=2.0) |
+| `KI=value` | Set integral gain (e.g., KI=0.5) |
+| `KD=value` | Set derivative gain (e.g., KD=0.1) |
+| `ENABLE` | Enable motor control |
+| `DISABLE` | Disable motor control |
+| `HELP` | Show all available commands |
+
+## Installation and Setup
+
+1. **Hardware Assembly:**
+   - Wire components according to the diagram above
+   - **Note**: No external pull-up resistor needed - Arduino handles this internally
+   - Ensure proper power supply (12V for motor, 5V for Arduino)
+   - Double-check all connections before powering on
+
+2. **Software Upload:**
+   - Open `IAC_Servo_Controller.ino` in Arduino IDE
+   - Select correct board (Arduino Uno/Nano)
+   - Upload code to Arduino
+
+3. **Initial Testing:**
+   - Open Serial Monitor (115200 baud)
+   - Type `STATUS` to verify system startup
+   - Manually test motor with `ENABLE`/`DISABLE` commands
+
+4. **PID Tuning:**
+   - Start with default values (Kp=2.0, Ki=0.5, Kd=0.1)
+   - Adjust via serial commands while monitoring response
+   - Tune for smooth, stable operation without oscillation
+
+## Integration with Speeduino
+
+1. Configure TunerStudio idle settings as described above
+2. Connect PWM output from Speeduino to Arduino Pin 2
+3. Wire TPS Pin 4 (Track 2) to Speeduino TPS input for engine management
+4. Wire TPS Pin 2 (Track 1) to Arduino A0 for servo feedback
+5. Ensure proper power supply connections (12V motor, 5V Arduino/TPS)
+6. Test idle control operation in TunerStudio
+
+## Troubleshooting
+
+### Common Issues:
+- **No PWM detected**: Check Speeduino idle output configuration and wiring
+- **Erratic movement**: Verify power supply stability and H-Bridge connections
+- **Poor tracking**: Adjust PID parameters via serial commands
+- **Motor not responding**: Check H-Bridge wiring and motor connections
+
+### Diagnostic Steps:
+1. Verify all power connections (12V motor, 5V Arduino/TPS, Ground)
+2. Check PWM signal with oscilloscope or serial monitor (should be 0-5V)
+3. Confirm TPS Track 1 voltage changes (0-5V) with throttle movement  
+4. Verify TPS Track 2 signal reaches Speeduino correctly
+5. Test motor manually with `ENABLE`/`DISABLE` commands
+6. Check H-Bridge connections and motor polarity
+
+## Technical Specifications
+
+- **Control Loop Frequency**: 100Hz (10ms intervals)
+- **PWM Input Mode**: 1 PWM (single signal with variable duty cycle)
+- **PWM Input Range**: 1000-2000μs (500-2500μs accepted)
+- **Speeduino PWM Frequency**: 15.6Hz to 250Hz (configurable in TunerStudio)
+- **Arduino PWM Output**: ~490Hz (to H-Bridge motor driver)
+- **TPS Resolution**: 10-bit (0-1023)
+- **Serial Baud Rate**: 115200
+- **Operating Voltage**: 5V (Arduino), 12V (Motor)
+
+*Note: For 2 PWM mode (dual signals), code modification would be required to read two separate PWM inputs.*
 
 ## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+
+This project is open source. Use and modify as needed for your application.
+
+## Support
+
+For technical support or questions, refer to the Speeduino community forums or the project documentation.
